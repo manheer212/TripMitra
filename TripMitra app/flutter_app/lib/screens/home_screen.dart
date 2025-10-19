@@ -1,9 +1,13 @@
 // lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
+import '../api_client.dart';
 import '../services.dart';
 import 'results_screen.dart';
+import 'login_screen.dart'; // Import for navigation
 
 class HomeScreen extends StatefulWidget {
+  // Define a name for routing from main.dart
+  static const routeName = '/home'; 
   const HomeScreen({super.key});
 
   @override
@@ -11,19 +15,44 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final ApiClient _apiClient = ApiClient();
+  // Controllers
   final TextEditingController _startController = TextEditingController(text: 'Delhi');
   final TextEditingController _destinationController = TextEditingController(text: 'Goa');
+  // State variables
   String _budgetType = 'Low';
   int _days = 3;
   int _people = 1;
-  bool _isLoading = false; // State variable for loading
-  
-  // Adding default domestic status
+  bool _isLoading = false;
   bool _domestic = true;
+  String? _currentUserId; // To hold the authenticated user ID
 
   final List<String> _popularDestinations = [
     'Paris', 'Dubai', 'Bali', 'Tokyo', 'London', 'New York', 'Goa', 'Manali', 'Jaipur', 'Singapore', 'Maldives',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserId();
+  }
+
+  // Load the authenticated User ID from secure storage on app start
+  Future<void> _loadUserId() async {
+    final userId = await _apiClient.storage.read(key: 'user_id');
+    setState(() {
+      _currentUserId = userId;
+    });
+  }
+
+  Future<void> _logout() async {
+    await _apiClient.deleteToken();
+    await _apiClient.storage.delete(key: 'user_id'); // Clear the stored user ID
+    if (context.mounted) {
+      // Navigate to Login screen and remove all previous routes
+      Navigator.of(context).pushNamedAndRemoveUntil(LoginScreen.routeName, (route) => false);
+    }
+  }
 
   Future<void> _goToResults() async {
     if (_destinationController.text.trim().isEmpty || _startController.text.trim().isEmpty) {
@@ -32,6 +61,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+    
+    // IMPORTANT: In a real app, we would block or redirect if _currentUserId is null
+    // Since we are moving forward, we'll continue using the ID retrieved (which is "1" after initial manual setup)
 
     setState(() {
       _isLoading = true;
@@ -41,31 +73,31 @@ class _HomeScreenState extends State<HomeScreen> {
       final result = await TripService.generateTrip(
         startLocation: _startController.text.trim(),
         destination: _destinationController.text.trim(),
-        budgetType: _budgetType, // Passed for potential future use or server logging
+        budgetType: _budgetType, 
         days: _days,
         people: _people,
-        domestic: _domestic, // Pass domestic flag
+        domestic: _domestic, 
       );
       
-      // Since scaling is done on the backend now, we just pass the result.
-      Navigator.pushNamed(
-        context,
-        ResultsScreen.routeName,
-        arguments: result,
-      );
+      if (context.mounted) {
+        Navigator.pushNamed(
+          context,
+          ResultsScreen.routeName,
+          arguments: result,
+        );
+      }
       
     } catch (e) {
-      // Handle the error (e.g., network error/404)
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error generating trip: $e'),
+          content: Text('Error generating trip: ${e.toString().split(':').last.trim()}'),
           backgroundColor: Colors.red,
         ),
       );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (context.mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -74,7 +106,25 @@ class _HomeScreenState extends State<HomeScreen> {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('TripMitra'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('TripMitra'), 
+        centerTitle: true,
+        actions: [
+          // Display a loading indicator if needed
+          if (_isLoading) 
+            const Padding(
+              padding: EdgeInsets.only(right: 16.0),
+              child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+            ),
+          
+          // Logout Button
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+            tooltip: 'Logout',
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: ListView(
@@ -83,6 +133,8 @@ class _HomeScreenState extends State<HomeScreen> {
               'Plan Your Perfect Trip 🧭',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
+            // Show the current user for confirmation
+            Text('Current User ID: ${_currentUserId ?? 'Not Logged In'}'), 
             const SizedBox(height: 16),
             TextField(
               controller: _startController,
@@ -102,7 +154,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: Text(place),
                 onPressed: () {
                   setState(() => _destinationController.text = place);
-                  // Simple check: Domestic if start and destination are Indian cities
                   if (['Goa', 'Manali', 'Jaipur'].contains(_startController.text) && ['Goa', 'Manali', 'Jaipur'].contains(place)) {
                     _domestic = true;
                   } else {
